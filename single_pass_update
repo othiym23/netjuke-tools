@@ -44,13 +44,20 @@ require 'uri'
 require 'rubygems'
 require 'sequel'
 
+$: << File.expand_path(File.join(File.dirname(__FILE__), '../ingestion/lib'))
+require 'track_metadata'
+
 class SinglePassUpdate
   VERSION = "1 (Ruby)"
 
   def initialize(arguments)
-    @new_tracks = 0
+    @new_tracks      = 0
     @existing_tracks = 0
-    @updated_tracks = 0
+    @updated_tracks  = 0
+    
+    @new_artists = 0
+    @new_albums  = 0
+    @new_genres  = 0
     
     @arguments = arguments
     
@@ -68,9 +75,9 @@ class SinglePassUpdate
       process_arguments
       connect_netjuke_db
       
-      # scan the archive and then update the denormalized counts
       scan_archive
       update_counts
+      output_summary
     else
       output_usage
     end
@@ -82,21 +89,20 @@ class SinglePassUpdate
     @@db_connection = Sequel.mysql(@options.dbname, :user     => @options.dbuser,
                                                     :password => @options.dbpass,
                                                     :host     => @options.dbhost)
+    @@tracks = @@db_connection[:netjuke_tracks]
   end
 
   def scan_archive
     Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
       next unless media_file?(path)
 
-      locations = @@db_connection[:netjuke_tracks].where(:location => storable_path(path))
-      if locations.size > 1
-        puts "ERROR: #{locations.size} rows found for path #{path}"
-        exit -2
-      elsif locations.size == 0
+      locations = @@tracks.where(:location => storable_path(path))
+      if locations.size == 0
         puts "NO rows found for path #{path}; creating one" if @options.verbose
         @new_tracks += 1
-        # TODO: create the row
-      else
+        create_track(path)
+        @existing_tracks +=1
+      elsif locations.size == 1
         puts "entry for path #{path} exists" if @options.verbose
         @existing_tracks += 1
         track = locations.first
@@ -105,6 +111,9 @@ class SinglePassUpdate
           @updated_tracks += 1
           puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
         end
+      else
+        puts "ERROR: #{locations.size} rows found for path #{path}"
+        exit -2
       end
     end
   end
@@ -123,6 +132,12 @@ class SinglePassUpdate
       @@db_connection << "CREATE TEMPORARY TABLE album_tracks AS SELECT netjuke_tracks.al_id album_id, COUNT(netjuke_tracks.id) album_track_count FROM netjuke_tracks GROUP BY album_id"
       @@db_connection << "UPDATE netjuke_albums, album_tracks SET netjuke_albums.track_cnt = album_tracks.album_track_count WHERE netjuke_albums.id = album_tracks.album_id"
     end
+  end
+  
+  def output_summary
+    puts "\n\n"
+    puts "#{@new_artists} artists created, #{@new_albums} albums created, and #{@new_genres} genres created."
+    puts "#{@new_tracks} tracks created, #{@updated_tracks} tracks updated, and #{@existing_tracks} tracks total."
   end
   
   def arguments_valid?
@@ -178,6 +193,100 @@ class SinglePassUpdate
   
   def track_updated?(track)
     track[:mtime] != File.mtime(readable_path(track[:location]))
+  end
+  
+  def process_artist(artist_name)
+    artists = @@db_connection[:netjuke_artists]
+    unless artist_name == ''
+      artist_rows = artists.where(:name => artist_name)
+
+      if artist_rows.size == 0
+        puts "creating artist #{artist_name}" if @options.verbose
+        artists << { :name => artist_name }
+        artist_rows = artists.where(:name => artist_name)
+        @new_artists += 1
+      end
+    else
+      artist_rows = artists.where(:name => 'N/A')
+    end
+    
+    if artist_rows.size > 1
+      puts "ERROR more than one artist found for #{artist_name}"
+      exit -2
+    end
+    
+    artist = artist_rows.first
+    artist[:id]
+  end
+  
+  def process_album(album_name)
+    albums = @@db_connection[:netjuke_albums]
+    unless album_name == ''
+      album_rows = albums.where(:name => album_name)
+
+      if album_rows.size == 0
+        puts "creating album #{album_name}" if @options.verbose
+        albums << { :name => album_name }
+        album_rows = albums.where(:name => album_name)
+        @new_albums += 1
+      end
+    else
+      album_rows = albums.where(:name => 'N/A')
+    end
+    
+    if album_rows.size > 1
+      puts "ERROR more than one album found for #{album_name}"
+      exit -2
+    end
+    
+    album = album_rows.first
+    album[:id]
+  end
+
+  def process_genre(genre_name)
+    genres = @@db_connection[:netjuke_genres]
+    unless genre_name == ''
+      genre_rows = genres.where(:name => genre_name)
+
+      if genre_rows.size == 0
+        puts "creating genre #{genre_name}" if @options.verbose
+        genres << { :name => genre_name }
+        genre_rows = genres.where(:name => genre_name)
+        @new_genres += 1
+      end
+    else
+      genre_rows = genres.where(:name => 'N/A')
+    end
+    
+    if genre_rows.size > 1
+      puts "ERROR more than one genre found for #{genre_name}"
+      exit -2
+    end
+    
+    genre = genre_rows.first
+    genre[:id]
+  end
+  
+  def create_track(path)
+    metadata   = TrackId3Metadata.load_from_path(path)
+    mp3file    = Mp3Info.new(path)
+    
+    puts "creating track #{metadata.track_name} (by #{metadata.artist_name}, from _#{metadata.album_name}_)" if @options.verbose
+    @@tracks << { :ar_id        => process_artist(metadata.artist_name), 
+                  :al_id        => process_album(metadata.album_name),
+                  :ge_id        => process_genre(metadata.genre),
+                  :name         => metadata.track_name,
+                  :size         => File.size(path),
+                  :time         => mp3file.length.round,
+                  :track_number => metadata.sequence,
+                  :year         => metadata.release_date,
+                  :date         => Time.now,
+                  :bit_rate     => mp3file.bitrate,
+                  :sample_rate  => mp3file.samplerate,
+                  :kind         => 'MPEG AUDIO FILE',
+                  :comments     => metadata.comment,
+                  :location     => storable_path(path),
+                  :mtime        => File.mtime(path) }
   end
 end
 
