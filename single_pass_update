@@ -48,6 +48,10 @@ class SinglePassUpdate
   VERSION = "1 (Ruby)"
 
   def initialize(arguments)
+    @new_tracks = 0
+    @existing_tracks = 0
+    @updated_tracks = 0
+    
     @arguments = arguments
     
     # set up option defaults
@@ -82,8 +86,26 @@ class SinglePassUpdate
 
   def scan_archive
     Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
-      next unless media_file(path)
-      puts storable_path(path)
+      next unless media_file?(path)
+
+      locations = @@db_connection[:netjuke_tracks].where(:location => storable_path(path))
+      if locations.size > 1
+        puts "ERROR: #{locations.size} rows found for path #{path}"
+        exit -2
+      elsif locations.size == 0
+        puts "NO rows found for path #{path}; creating one" if @options.verbose
+        @new_tracks += 1
+        # TODO: create the row
+      else
+        puts "entry for path #{path} exists" if @options.verbose
+        @existing_tracks += 1
+        track = locations.first
+        
+        if track_updated?(track)
+          @updated_tracks += 1
+          puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
+        end
+      end
     end
   end
   
@@ -142,12 +164,20 @@ class SinglePassUpdate
 
   private
   
-  def media_file(path)
+  def media_file?(path)
     return File.file?(path) && File.readable?(path) && File.extname(path).downcase == ".mp3"
   end
   
   def storable_path(path)
     URI.encode(path[(@archive_root.length + 1)..path.length])
+  end
+  
+  def readable_path(path)
+    @archive_root + File::SEPARATOR + URI.decode(path)
+  end
+  
+  def track_updated?(track)
+    track[:mtime] != File.mtime(readable_path(track[:location]))
   end
 end
 
