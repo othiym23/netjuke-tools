@@ -1,0 +1,124 @@
+#!/usr/bin/env ruby
+
+# == Synopsis 
+#   Netjuke's default MP3 scanner makes me nervous, being written in
+#   grimy PHP and using Netjuke's hacktacular taglib. It also appears
+#   to be hella inefficient. Hence this command-line replacement, which
+#   tries to do everything in a single pass, use judicious amounts of
+#   caching, and not be extravagant about memory or database usage.
+#
+# == Examples
+#   This is the way this program will almost always be invoked:
+#     single_pass_update --dbpass=<password> /data/music mp3
+#
+#   Other examples:
+#     single_pass_update --verbose /Volumes/data/music holding/pending
+#
+# == Usage 
+#   single_pass_update [options] archive_root subdirectory
+#
+#   For help use: single_pass_update -h
+#
+# == Options
+#   -h, --help          displays help message
+#   -v, --version       displays the version, then exits
+#   -V, --verbose       turns on verbose output
+#   -U, --dbuser        Netjuke database username (defaults to "netjuke")
+#   -P, --dbpass        Netjuke database password
+#   -H, --dbhost        Netjuke database host (defaults to localhost)
+#
+# == Author
+#   Forrest L Norvell <forrest@driftglass.org>
+#
+# == Copyright
+#   Copyright (c) 2008 Forrest L Norvell. Licensed under
+#   the GNU General Public License, Version 2
+
+
+require 'optparse'
+require 'rdoc/usage'
+require 'ostruct'
+require 'find'
+require 'uri'
+
+class SinglePassUpdate
+  VERSION = "1 (Ruby)"
+
+  def initialize(arguments)
+    @arguments = arguments
+    
+    # set up option defaults
+    @options = OpenStruct.new
+    @options.verbose = false
+    @options.dbuser = "netjuke"
+    @options.dbhost = "localhost"
+  end
+  
+  def run
+    if parsed_options? && arguments_valid?
+      
+      process_arguments
+      scan_archive
+    else
+      output_usage
+    end
+  end
+  
+  protected
+  
+  def scan_archive
+    Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
+      next unless media_file(path)
+      puts storable_path(path)
+    end
+  end
+  
+  def arguments_valid?
+    true if @arguments.size == 2 && File.directory?(@arguments[0] + File::SEPARATOR + @arguments[1])
+  end
+  
+  def parsed_options?
+    parser = OptionParser.new 
+    parser.on('-v', '--version')    { output_version ; exit 0 }
+    parser.on('-h', '--help')       { output_help }
+    parser.on('-V', '--verbose')    { @options.verbose = true }
+    parser.on('-U', '--dbuser')     { |username| @options.dbuser = username }
+    parser.on('-P', '--dbpass')     { |password| @options.dbpass = password }
+    parser.on('-H', '--dbhost')     { |hostname| @options.dbhost = hostname }
+
+    parser.parse!(@arguments) rescue return false
+
+    true
+  end
+
+  def output_help
+    output_version
+    RDoc::usage() # exits app
+  end
+  
+  def output_usage
+    RDoc::usage('usage') # gets usage from comments above
+  end
+
+  def output_version
+    puts "#{File.basename(__FILE__)} version #{VERSION}"
+  end
+  
+  def process_arguments
+    @archive_root = @arguments[0]
+    @subdirectory = @arguments[1]
+  end
+
+  private
+  
+  def media_file(path)
+    return File.file?(path) && File.readable?(path) && File.extname(path).downcase == ".mp3"
+  end
+  
+  def storable_path(path)
+    URI.encode(path[(@archive_root.length + 1)..path.length])
+  end
+end
+
+updater = SinglePassUpdate.new(ARGV)
+updater.run
