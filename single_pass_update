@@ -23,6 +23,7 @@
 #   -h, --help          displays help message
 #   -v, --version       displays the version, then exits
 #   -V, --verbose       turns on verbose output
+#   -D, --dbname        Netjuke database instance name (defaults to "netjuke")
 #   -U, --dbuser        Netjuke database username (defaults to "netjuke")
 #   -P, --dbpass        Netjuke database password
 #   -H, --dbhost        Netjuke database host (defaults to localhost)
@@ -34,12 +35,14 @@
 #   Copyright (c) 2008 Forrest L Norvell. Licensed under
 #   the GNU General Public License, Version 2
 
-
 require 'optparse'
 require 'rdoc/usage'
 require 'ostruct'
 require 'find'
 require 'uri'
+
+require 'rubygems'
+require 'sequel'
 
 class SinglePassUpdate
   VERSION = "1 (Ruby)"
@@ -50,6 +53,7 @@ class SinglePassUpdate
     # set up option defaults
     @options = OpenStruct.new
     @options.verbose = false
+    @options.dbname = "netjuke"
     @options.dbuser = "netjuke"
     @options.dbhost = "localhost"
   end
@@ -58,18 +62,44 @@ class SinglePassUpdate
     if parsed_options? && arguments_valid?
       
       process_arguments
+      connect_netjuke_db
+      
+      # scan the archive and then update the denormalized counts
       scan_archive
+      update_counts
     else
       output_usage
     end
   end
   
   protected
-  
+
+  def connect_netjuke_db
+    @@db_connection = Sequel.mysql(@options.dbname, :user     => @options.dbuser,
+                                                    :password => @options.dbpass,
+                                                    :host     => @options.dbhost)
+  end
+
   def scan_archive
     Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
       next unless media_file(path)
       puts storable_path(path)
+    end
+  end
+  
+  def update_counts
+    @@db_connection.transaction do
+      puts "updating denormalized track count for each genre...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE genre_tracks AS SELECT netjuke_tracks.ge_id genre_id, COUNT(netjuke_tracks.id) genre_track_count FROM netjuke_tracks GROUP BY genre_id"
+      @@db_connection << "UPDATE netjuke_genres, genre_tracks SET netjuke_genres.track_cnt = genre_tracks.genre_track_count WHERE netjuke_genres.id = genre_tracks.genre_id"
+      
+      puts "updating denormalized track count for each artist...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE artist_tracks AS SELECT netjuke_tracks.ar_id artist_id, COUNT(netjuke_tracks.id) artist_track_count FROM netjuke_tracks GROUP BY artist_id"
+      @@db_connection << "UPDATE netjuke_artists, artist_tracks SET netjuke_artists.track_cnt = artist_tracks.artist_track_count WHERE netjuke_artists.id = artist_tracks.artist_id"
+      
+      puts "updating denormalized track count for each album...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE album_tracks AS SELECT netjuke_tracks.al_id album_id, COUNT(netjuke_tracks.id) album_track_count FROM netjuke_tracks GROUP BY album_id"
+      @@db_connection << "UPDATE netjuke_albums, album_tracks SET netjuke_albums.track_cnt = album_tracks.album_track_count WHERE netjuke_albums.id = album_tracks.album_id"
     end
   end
   
@@ -79,12 +109,13 @@ class SinglePassUpdate
   
   def parsed_options?
     parser = OptionParser.new 
-    parser.on('-v', '--version')    { output_version ; exit 0 }
-    parser.on('-h', '--help')       { output_help }
-    parser.on('-V', '--verbose')    { @options.verbose = true }
-    parser.on('-U', '--dbuser')     { |username| @options.dbuser = username }
-    parser.on('-P', '--dbpass')     { |password| @options.dbpass = password }
-    parser.on('-H', '--dbhost')     { |hostname| @options.dbhost = hostname }
+    parser.on('-v', '--version')         { output_version ; exit 0 }
+    parser.on('-h', '--help')            { output_help }
+    parser.on('-V', '--verbose')         { @options.verbose = true }
+    parser.on('-D', '--dbname DBNAME')   { |database| @options.dbname = database }
+    parser.on('-U', '--dbuser USERNAME') { |username| @options.dbuser = username }
+    parser.on('-P', '--dbpass PASSWORD') { |password| @options.dbpass = password }
+    parser.on('-H', '--dbhost HOSTNAME') { |hostname| @options.dbhost = hostname }
 
     parser.parse!(@arguments) rescue return false
 
