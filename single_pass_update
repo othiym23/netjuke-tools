@@ -85,61 +85,6 @@ class SinglePassUpdate
   
   protected
 
-  def connect_netjuke_db
-    @@db_connection = Sequel.mysql(@options.dbname, :user     => @options.dbuser,
-                                                    :password => @options.dbpass,
-                                                    :host     => @options.dbhost)
-    @@tracks = @@db_connection[:netjuke_tracks]
-  end
-
-  def scan_archive
-    Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
-      next unless media_file?(path)
-
-      locations = @@tracks.where(:location => storable_path(path))
-      if locations.size == 0
-        puts "NO rows found for path #{path}; creating one" if @options.verbose
-        @new_tracks += 1
-        create_track(path)
-        @existing_tracks +=1
-      elsif locations.size == 1
-        puts "entry for path #{path} exists" if @options.verbose
-        @existing_tracks += 1
-        track = locations.first
-        
-        if track_updated?(track)
-          @updated_tracks += 1
-          puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
-        end
-      else
-        puts "ERROR: #{locations.size} rows found for path #{path}"
-        exit -2
-      end
-    end
-  end
-  
-  def update_counts
-    @@db_connection.transaction do
-      puts "updating denormalized track count for each genre...\n" if @options.verbose
-      @@db_connection << "CREATE TEMPORARY TABLE genre_tracks AS SELECT netjuke_tracks.ge_id genre_id, COUNT(netjuke_tracks.id) genre_track_count FROM netjuke_tracks GROUP BY genre_id"
-      @@db_connection << "UPDATE netjuke_genres, genre_tracks SET netjuke_genres.track_cnt = genre_tracks.genre_track_count WHERE netjuke_genres.id = genre_tracks.genre_id"
-      
-      puts "updating denormalized track count for each artist...\n" if @options.verbose
-      @@db_connection << "CREATE TEMPORARY TABLE artist_tracks AS SELECT netjuke_tracks.ar_id artist_id, COUNT(netjuke_tracks.id) artist_track_count FROM netjuke_tracks GROUP BY artist_id"
-      @@db_connection << "UPDATE netjuke_artists, artist_tracks SET netjuke_artists.track_cnt = artist_tracks.artist_track_count WHERE netjuke_artists.id = artist_tracks.artist_id"
-      
-      puts "updating denormalized track count for each album...\n" if @options.verbose
-      @@db_connection << "CREATE TEMPORARY TABLE album_tracks AS SELECT netjuke_tracks.al_id album_id, COUNT(netjuke_tracks.id) album_track_count FROM netjuke_tracks GROUP BY album_id"
-      @@db_connection << "UPDATE netjuke_albums, album_tracks SET netjuke_albums.track_cnt = album_tracks.album_track_count WHERE netjuke_albums.id = album_tracks.album_id"
-    end
-  end
-  
-  def output_summary
-    puts "\n\n"
-    puts "#{@new_artists} artists created, #{@new_albums} albums created, and #{@new_genres} genres created."
-    puts "#{@new_tracks} tracks created, #{@updated_tracks} tracks updated, and #{@existing_tracks} tracks total."
-  end
-  
   def arguments_valid?
     true if @arguments.size == 2 && File.directory?(@arguments[0] + File::SEPARATOR + @arguments[1])
   end
@@ -178,6 +123,62 @@ class SinglePassUpdate
   end
 
   private
+  
+  def connect_netjuke_db
+    @@db_connection = Sequel.mysql(@options.dbname, :user     => @options.dbuser,
+                                                    :password => @options.dbpass,
+                                                    :host     => @options.dbhost)
+    @@tracks = @@db_connection[:netjuke_tracks]
+  end
+
+  def scan_archive
+    Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
+      next unless media_file?(path)
+
+      locations = @@tracks.where(:location => storable_path(path))
+      if locations.size == 0
+        puts "NO rows found for path #{path}; creating one" if @options.verbose
+        @new_tracks += 1
+        create_track(path)
+        @existing_tracks +=1
+      elsif locations.size == 1
+        puts "entry for path #{path} exists" if @options.verbose
+        @existing_tracks += 1
+        track = locations.first
+        
+        if track_updated?(track)
+          @updated_tracks += 1
+          update_track(track)
+          puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
+        end
+      else
+        puts "ERROR: #{locations.size} rows found for path #{path}"
+        exit -2
+      end
+    end
+  end
+  
+  def update_counts
+    @@db_connection.transaction do
+      puts "updating denormalized track count for each genre...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE genre_tracks AS SELECT netjuke_tracks.ge_id genre_id, COUNT(netjuke_tracks.id) genre_track_count FROM netjuke_tracks GROUP BY genre_id"
+      @@db_connection << "UPDATE netjuke_genres, genre_tracks SET netjuke_genres.track_cnt = genre_tracks.genre_track_count WHERE netjuke_genres.id = genre_tracks.genre_id"
+      
+      puts "updating denormalized track count for each artist...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE artist_tracks AS SELECT netjuke_tracks.ar_id artist_id, COUNT(netjuke_tracks.id) artist_track_count FROM netjuke_tracks GROUP BY artist_id"
+      @@db_connection << "UPDATE netjuke_artists, artist_tracks SET netjuke_artists.track_cnt = artist_tracks.artist_track_count WHERE netjuke_artists.id = artist_tracks.artist_id"
+      
+      puts "updating denormalized track count for each album...\n" if @options.verbose
+      @@db_connection << "CREATE TEMPORARY TABLE album_tracks AS SELECT netjuke_tracks.al_id album_id, COUNT(netjuke_tracks.id) album_track_count FROM netjuke_tracks GROUP BY album_id"
+      @@db_connection << "UPDATE netjuke_albums, album_tracks SET netjuke_albums.track_cnt = album_tracks.album_track_count WHERE netjuke_albums.id = album_tracks.album_id"
+    end
+  end
+  
+  def output_summary
+    puts "\n\n"
+    puts "#{@new_artists} artists created, #{@new_albums} albums created, and #{@new_genres} genres created."
+    puts "#{@new_tracks} tracks created, #{@updated_tracks} tracks updated, and #{@existing_tracks} tracks total."
+  end
   
   def media_file?(path)
     return File.file?(path) && File.readable?(path) && File.extname(path).downcase == ".mp3"
@@ -286,7 +287,32 @@ class SinglePassUpdate
                   :kind         => 'MPEG AUDIO FILE',
                   :comments     => metadata.comment,
                   :location     => storable_path(path),
-                  :mtime        => File.mtime(path) }
+                  :mtime        => File.mtime(path)
+                }
+  end
+  
+  def update_track(track)
+    path = readable_path(track[:location])
+    
+    metadata   = TrackId3Metadata.load_from_path(path)
+    mp3file    = Mp3Info.new(path)
+    
+    # TODO: there may be a more efficient way to do this using a Sequel model, but
+    # let's keep it high-level for now
+    @@tracks.where(:id => track[:id]).update(
+      :ar_id        => process_artist(metadata.artist_name), 
+      :al_id        => process_album(metadata.album_name),
+      :ge_id        => process_genre(metadata.genre),
+      :name         => metadata.track_name,
+      :size         => File.size(path),
+      :time         => mp3file.length.round,
+      :track_number => metadata.sequence,
+      :year         => metadata.release_date,
+      :bit_rate     => mp3file.bitrate,
+      :sample_rate  => mp3file.samplerate,
+      :comments     => metadata.comment,
+      :mtime        => File.mtime(path)
+    )
   end
 end
 
