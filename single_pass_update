@@ -294,7 +294,7 @@ class SinglePassUpdate
   def create_track(path)
     new_track = populate_track_record(path)
 
-    puts "creating track #{new_track[:name]} (by artist ID #{new_track[:ar_id]}, from album ID #{new_track[:al_id]})" if @options.verbose
+    puts "creating track #{new_track[:name]} (by #{@artist_cache_by_id[new_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[new_track[:al_id]][:name]}_)" if @options.verbose
     @@tracks << new_track
   end
   
@@ -303,7 +303,7 @@ class SinglePassUpdate
     
     # TODO: there may be a more efficient way to do this using a Sequel model, but
     # let's keep it high-level for now
-    puts "updating track #{new_track[:name]} (by artist ID #{new_track[:ar_id]}, from album ID #{new_track[:al_id]})" if @options.verbose
+    puts "updating track #{new_track[:name]} (by #{@artist_cache_by_id[new_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[new_track[:al_id]][:name]}_)" if @options.verbose
     @@tracks.where(:id => track[:id]).update(
       :ar_id        => updated_track[:ar_id],
       :al_id        => updated_track[:al_id],
