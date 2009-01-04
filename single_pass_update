@@ -269,38 +269,38 @@ class SinglePassUpdate
   end
   
   def create_track(path)
-    metadata   = TrackId3Metadata.load_from_path(path)
-    mp3file    = Mp3Info.new(path)
-    
-    puts "creating track #{metadata.track_name} (by #{metadata.artist_name}, from _#{metadata.album_name}_)" if @options.verbose
-    @@tracks << { :ar_id        => process_artist(metadata.artist_name), 
-                  :al_id        => process_album(metadata.album_name),
-                  :ge_id        => process_genre(metadata.genre),
-                  :name         => metadata.track_name,
-                  :size         => File.size(path),
-                  :time         => mp3file.length.round,
-                  :track_number => metadata.sequence,
-                  :year         => metadata.release_date,
-                  :date         => Time.now,
-                  :bit_rate     => mp3file.bitrate,
-                  :sample_rate  => mp3file.samplerate,
-                  :kind         => 'MPEG AUDIO FILE',
-                  :comments     => metadata.comment,
-                  :location     => storable_path(path),
-                  :mtime        => File.mtime(path)
-                }
+    new_track = create_track_record(path)
+
+    puts "creating track #{new_track[:name]} (by artist ID #{new_track[:ar_id]}, from album ID #{new_track[:al_id]})" if @options.verbose
+    @@tracks << new_track
   end
   
   def update_track(track)
-    path = readable_path(track[:location])
-    
-    metadata   = TrackId3Metadata.load_from_path(path)
-    mp3file    = Mp3Info.new(path)
+    updated_track = create_track_record(readable_path(track[:location]))
     
     # TODO: there may be a more efficient way to do this using a Sequel model, but
     # let's keep it high-level for now
     @@tracks.where(:id => track[:id]).update(
-      :ar_id        => process_artist(metadata.artist_name), 
+      :ar_id        => updated_track[:ar_id],
+      :al_id        => updated_track[:al_id],
+      :ge_id        => updated_track[:ge_id],
+      :name         => updated_track[:name],
+      :size         => updated_track[:size],
+      :time         => updated_track[:time],
+      :track_number => updated_track[:track_number],
+      :year         => updated_track[:year],
+      :bit_rate     => updated_track[:bit_rate],
+      :sample_rate  => updated_track[:sample_rate],
+      :comments     => updated_track[:comments],
+      :mtime        => updated_track[:mtime],
+    )
+  end
+  
+  def create_track_record(path)
+    metadata   = TrackId3Metadata.load_from_path(path)
+    mp3file    = Mp3Info.new(path)
+    
+    { :ar_id        => process_artist(metadata.artist_name), 
       :al_id        => process_album(metadata.album_name),
       :ge_id        => process_genre(metadata.genre),
       :name         => metadata.track_name,
@@ -308,11 +308,14 @@ class SinglePassUpdate
       :time         => mp3file.length.round,
       :track_number => metadata.sequence,
       :year         => metadata.release_date,
+      :date         => Time.now,
       :bit_rate     => mp3file.bitrate,
       :sample_rate  => mp3file.samplerate,
+      :kind         => 'MPEG AUDIO FILE',
       :comments     => metadata.comment,
+      :location     => storable_path(path),
       :mtime        => File.mtime(path)
-    )
+    }
   end
 end
 
