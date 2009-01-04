@@ -59,6 +59,14 @@ class SinglePassUpdate
     @new_albums  = 0
     @new_genres  = 0
     
+    @artist_cache_by_name = {}
+    @album_cache_by_name  = {}
+    @genre_cache_by_name  = {}
+
+    @artist_cache_by_id = {}
+    @album_cache_by_id  = {}
+    @genre_cache_by_id  = {}
+    
     @arguments = arguments
     
     # set up option defaults
@@ -197,89 +205,105 @@ class SinglePassUpdate
   end
   
   def process_artist(artist_name)
-    artists = @@db_connection[:netjuke_artists]
-    unless artist_name == ''
-      artist_rows = artists.where(:name => artist_name)
-
-      if artist_rows.size == 0
-        puts "creating artist #{artist_name}" if @options.verbose
-        artists << { :name => artist_name }
+    unless @artist_cache_by_name[artist_name]
+      artists = @@db_connection[:netjuke_artists]
+      unless artist_name == ''
         artist_rows = artists.where(:name => artist_name)
-        @new_artists += 1
+        
+        if artist_rows.size == 0
+          puts "creating artist #{artist_name}" if @options.verbose
+          artists << { :name => artist_name }
+          artist_rows = artists.where(:name => artist_name)
+          @new_artists += 1
+        end
+      else
+        artist_rows = artists.where(:name => 'N/A')
       end
-    else
-      artist_rows = artists.where(:name => 'N/A')
+      
+      if artist_rows.size > 1
+        puts "ERROR more than one artist found for #{artist_name}"
+        exit -2
+      end
+      
+      artist = artist_rows.first
+      @artist_cache_by_name[artist_name] = artist
+      @artist_cache_by_id[artist[:id]] = artist
     end
-    
-    if artist_rows.size > 1
-      puts "ERROR more than one artist found for #{artist_name}"
-      exit -2
-    end
-    
-    artist = artist_rows.first
-    artist[:id]
+
+    @artist_cache_by_name[artist_name][:id]
   end
   
   def process_album(album_name)
-    albums = @@db_connection[:netjuke_albums]
-    unless album_name == ''
-      album_rows = albums.where(:name => album_name)
-
-      if album_rows.size == 0
-        puts "creating album #{album_name}" if @options.verbose
-        albums << { :name => album_name }
+    unless @album_cache_by_name[album_name]
+      albums = @@db_connection[:netjuke_albums]
+      unless album_name == ''
         album_rows = albums.where(:name => album_name)
-        @new_albums += 1
+
+        if album_rows.size == 0
+          puts "creating album #{album_name}" if @options.verbose
+          albums << { :name => album_name }
+          album_rows = albums.where(:name => album_name)
+          @new_albums += 1
+        end
+      else
+        album_rows = albums.where(:name => 'N/A')
       end
-    else
-      album_rows = albums.where(:name => 'N/A')
+      
+      if album_rows.size > 1
+        puts "ERROR more than one album found for #{album_name}"
+        exit -2
+      end
+      
+      album = album_rows.first
+      @album_cache_by_name[album_name] = album
+      @album_cache_by_id[album[:id]] = album
     end
-    
-    if album_rows.size > 1
-      puts "ERROR more than one album found for #{album_name}"
-      exit -2
-    end
-    
-    album = album_rows.first
-    album[:id]
+
+    @album_cache_by_name[album_name][:id]
   end
 
   def process_genre(genre_name)
-    genres = @@db_connection[:netjuke_genres]
-    unless genre_name == ''
-      genre_rows = genres.where(:name => genre_name)
-
-      if genre_rows.size == 0
-        puts "creating genre #{genre_name}" if @options.verbose
-        genres << { :name => genre_name }
+    unless @genre_cache_by_name[genre_name]
+      genres = @@db_connection[:netjuke_genres]
+      unless genre_name == ''
         genre_rows = genres.where(:name => genre_name)
-        @new_genres += 1
+
+        if genre_rows.size == 0
+          puts "creating genre #{genre_name}" if @options.verbose
+          genres << { :name => genre_name }
+          genre_rows = genres.where(:name => genre_name)
+          @new_genres += 1
+        end
+      else
+        genre_rows = genres.where(:name => 'N/A')
       end
-    else
-      genre_rows = genres.where(:name => 'N/A')
+      
+      if genre_rows.size > 1
+        puts "ERROR more than one genre found for #{genre_name}"
+        exit -2
+      end
+      
+      genre = genre_rows.first
+      @genre_cache_by_name[genre_name] = genre
+      @genre_cache_by_id[genre[:id]] = genre
     end
     
-    if genre_rows.size > 1
-      puts "ERROR more than one genre found for #{genre_name}"
-      exit -2
-    end
-    
-    genre = genre_rows.first
-    genre[:id]
+    @genre_cache_by_name[genre_name][:id]
   end
   
   def create_track(path)
-    new_track = create_track_record(path)
+    new_track = populate_track_record(path)
 
     puts "creating track #{new_track[:name]} (by artist ID #{new_track[:ar_id]}, from album ID #{new_track[:al_id]})" if @options.verbose
     @@tracks << new_track
   end
   
   def update_track(track)
-    updated_track = create_track_record(readable_path(track[:location]))
+    updated_track = populate_track_record(readable_path(track[:location]))
     
     # TODO: there may be a more efficient way to do this using a Sequel model, but
     # let's keep it high-level for now
+    puts "updating track #{new_track[:name]} (by artist ID #{new_track[:ar_id]}, from album ID #{new_track[:al_id]})" if @options.verbose
     @@tracks.where(:id => track[:id]).update(
       :ar_id        => updated_track[:ar_id],
       :al_id        => updated_track[:al_id],
@@ -296,7 +320,7 @@ class SinglePassUpdate
     )
   end
   
-  def create_track_record(path)
+  def populate_track_record(path)
     metadata   = TrackId3Metadata.load_from_path(path)
     mp3file    = Mp3Info.new(path)
     
