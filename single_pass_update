@@ -192,7 +192,7 @@ class SinglePassUpdate
   end
   
   def media_file?(path)
-    return File.file?(path) && File.readable?(path) && File.extname(path).downcase == ".mp3"
+    return File.extname(path).downcase == ".mp3"
   end
   
   def storable_path(path)
@@ -200,7 +200,7 @@ class SinglePassUpdate
   end
   
   def readable_path(path)
-    @archive_root + File::SEPARATOR + URI.decode(path)
+    "#{@archive_root}#{File::SEPARATOR}#{URI.decode(path)}"
   end
   
   def track_updated?(track, path)
