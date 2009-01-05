@@ -342,7 +342,7 @@ class SinglePassUpdate
       :ge_id        => process_genre(metadata.genre),
       :name         => metadata.track_name,
       :size         => File.size(path),
-      :time         => mp3file.length.round,
+      :time         => (mp3file.length || 0.0).round,
       :track_number => metadata.sequence,
       :year         => metadata.release_date,
       :date         => Time.now,
