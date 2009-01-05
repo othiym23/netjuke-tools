@@ -147,26 +147,36 @@ class SinglePassUpdate
   end
   
   def scan_archive
-    Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
-      next unless media_file?(path)
-
-      if !@track_cache[path]
-        puts "NO rows found for path #{path}; creating one" if @options.verbose
-        @new_tracks += 1
-        create_track(path)
-        @existing_tracks +=1
+    puts "scanning #{@subdirectory} under #{@archive_root}..."
+    Find.find("#{@archive_root}#{File::SEPARATOR}#{@subdirectory}") do |path|
+      if FileTest.directory?(path)
+        if File.basename(path)[0] == ?.
+          Find.prune       # Don't look any further into this directory.
+        else
+          next
+        end
       else
-        puts "entry for path #{path} exists" if @options.verbose
-        @existing_tracks += 1
-        track = @track_cache[path]
+        next unless media_file?(path)
+
+        if !@track_cache[path]
+          puts "NO rows found for path #{path}; creating one" if @options.verbose
+          @new_tracks += 1
+          create_track(path)
+          @existing_tracks +=1
+        else
+          puts "entry for path #{path} exists" if @options.verbose
+          @existing_tracks += 1
+          track = @track_cache[path]
         
-        if track_updated?(track, path)
-          @updated_tracks += 1
-          update_track(track)
-          puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
+          if track_updated?(track, path)
+            @updated_tracks += 1
+            update_track(track)
+            puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
+          end
         end
       end
     end
+    puts "scanning completed."
   end
   
   def update_counts
@@ -297,7 +307,7 @@ class SinglePassUpdate
   def create_track(path)
     new_track = populate_track_record(path)
 
-    puts "creating track #{new_track[:name]} (by #{@artist_cache_by_id[new_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[new_track[:al_id]][:name]}_)" if @options.verbose
+    puts "creating track #{new_track[:name]} (by #{@artist_cache_by_id[new_track[:ar_id]][:name]}, from _#{@album_cache_by_id[new_track[:al_id]][:name]}_)"
     @@tracks << new_track
   end
   
@@ -306,7 +316,7 @@ class SinglePassUpdate
     
     # TODO: there may be a more efficient way to do this using a Sequel model, but
     # let's keep it high-level for now
-    puts "updating track #{updated_track[:name]} (by #{@artist_cache_by_id[updated_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[updated_track[:al_id]][:name]}_)" if @options.verbose
+    puts "updating track #{updated_track[:name]} (by #{@artist_cache_by_id[updated_track[:ar_id]][:name]}, from _#{@album_cache_by_id[updated_track[:al_id]][:name]}_)"
     @@tracks.where(:id => track[:id]).update(
       :ar_id        => updated_track[:ar_id],
       :al_id        => updated_track[:al_id],
