@@ -83,6 +83,7 @@ class SinglePassUpdate
       process_arguments
       connect_netjuke_db
       
+      create_location_cache
       scan_archive
       update_counts
       output_summary
@@ -139,29 +140,31 @@ class SinglePassUpdate
     @@tracks = @@db_connection[:netjuke_tracks]
   end
 
+  def create_location_cache
+    puts "building track cache..."
+    @track_cache = @@tracks.inject({}) {|cache, row| cache[readable_path(row[:location])] = row; cache}
+    puts "track cache populated."
+  end
+  
   def scan_archive
     Find.find(@archive_root + File::SEPARATOR + @subdirectory) do |path|
       next unless media_file?(path)
 
-      locations = @@tracks.where(:location => storable_path(path))
-      if locations.size == 0
+      if !@track_cache[path]
         puts "NO rows found for path #{path}; creating one" if @options.verbose
         @new_tracks += 1
         create_track(path)
         @existing_tracks +=1
-      elsif locations.size == 1
+      else
         puts "entry for path #{path} exists" if @options.verbose
         @existing_tracks += 1
-        track = locations.first
+        track = @track_cache[path]
         
-        if track_updated?(track)
+        if track_updated?(track, path)
           @updated_tracks += 1
           update_track(track)
           puts "UPDATE: track was stored at #{track[:mtime]}, last updated at #{File.mtime(readable_path(track[:location]))}" if @options.verbose
         end
-      else
-        puts "ERROR: #{locations.size} rows found for path #{path}"
-        exit -2
       end
     end
   end
@@ -200,8 +203,8 @@ class SinglePassUpdate
     @archive_root + File::SEPARATOR + URI.decode(path)
   end
   
-  def track_updated?(track)
-    track[:mtime] != File.mtime(readable_path(track[:location]))
+  def track_updated?(track, path)
+    track[:mtime] != File.mtime(path)
   end
   
   def process_artist(artist_name)
@@ -303,7 +306,7 @@ class SinglePassUpdate
     
     # TODO: there may be a more efficient way to do this using a Sequel model, but
     # let's keep it high-level for now
-    puts "updating track #{new_track[:name]} (by #{@artist_cache_by_id[new_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[new_track[:al_id]][:name]}_)" if @options.verbose
+    puts "updating track #{updated_track[:name]} (by #{@artist_cache_by_id[updated_track[:ar_id]][:name]}, from album ID _#{@album_cache_by_id[updated_track[:al_id]][:name]}_)" if @options.verbose
     @@tracks.where(:id => track[:id]).update(
       :ar_id        => updated_track[:ar_id],
       :al_id        => updated_track[:al_id],
@@ -316,7 +319,7 @@ class SinglePassUpdate
       :bit_rate     => updated_track[:bit_rate],
       :sample_rate  => updated_track[:sample_rate],
       :comments     => updated_track[:comments],
-      :mtime        => updated_track[:mtime],
+      :mtime        => updated_track[:mtime]
     )
   end
   
